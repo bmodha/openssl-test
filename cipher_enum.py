@@ -2,6 +2,7 @@ import sys
 import ssl
 import socket
 import json
+import subprocess
 
 def test_tls12_ciphers(host, port, allowed_ciphers_tls12):
     print("=== TLSv1.2 ===")
@@ -25,23 +26,42 @@ def test_tls12_ciphers(host, port, allowed_ciphers_tls12):
         except Exception:
             print(f"Not supported: {cipher}")
 
+def test_tls13_cipher_openssl(host, port, cipher):
+    cmd = [
+        "openssl", "s_client",
+        "-connect", f"{host}:{port}",
+        "-tls1_3",
+        "-ciphersuites", cipher,
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        output = result.stdout + result.stderr
+
+        # Uncomment below for debug output if needed
+        # print(f"Debug output for cipher {cipher}:\n{output}\n{'-'*60}")
+
+        if ("handshake failure" in output.lower() or
+            "alert" in output.lower() or
+            "error" in output.lower()):
+            return False
+
+        for line in output.splitlines():
+            if line.strip().startswith("Cipher    :"):
+                if cipher in line:
+                    return True
+                else:
+                    return False
+        return False
+    except Exception:
+        return False
+
 def test_tls13_ciphers(host, port, allowed_ciphers_tls13):
     print("\n=== TLSv1.3 ===")
-    # TLS 1.3 ciphers cannot be set individually in Python SSLContext.
-    # Instead, test if TLS 1.3 is supported at all by connecting with TLS 1.3 only.
-    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-    context.minimum_version = ssl.TLSVersion.TLSv1_3
-    context.maximum_version = ssl.TLSVersion.TLSv1_3
-    context.check_hostname = False
-    context.verify_mode = ssl.CERT_NONE
-
-    try:
-        with socket.create_connection((host, port), timeout=3) as sock:
-            with context.wrap_socket(sock, server_hostname=host):
-                # If connection succeeds, TLS 1.3 is supported.
-                print("TLS 1.3 is supported (specific cipher detection not available in Python ssl).")
-    except Exception as e:
-        print(f"TLS 1.3 connection failed: {e}")
+    for cipher in allowed_ciphers_tls13:
+        if test_tls13_cipher_openssl(host, port, cipher):
+            print(f"Supported: {cipher}")
+        else:
+            print(f"Not supported: {cipher}")
 
 def get_server_supported_ciphers(host, port, min_version, max_version):
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
@@ -50,7 +70,6 @@ def get_server_supported_ciphers(host, port, min_version, max_version):
     context.check_hostname = False
     context.verify_mode = ssl.CERT_NONE
 
-    # Gather all ciphers from the underlying OpenSSL version
     ciphers = [c['name'] for c in context.get_ciphers()]
     supported = []
 
@@ -101,8 +120,8 @@ def main():
     for c in disallowed_tls12:
         print(c)
 
-    # For TLS 1.3, Python ssl does not provide ciphers enumeration, so only check if TLS1.3 is supported
-    # You can implement external tools like `openssl s_client` for detailed TLS 1.3 ciphers enumeration
+    # Note: Detailed TLS 1.3 ciphers enumeration via Python ssl not possible;
+    # We tested TLS 1.3 ciphers with openssl s_client already.
 
 if __name__ == "__main__":
     main()
